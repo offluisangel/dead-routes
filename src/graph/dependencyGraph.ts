@@ -75,7 +75,8 @@ export class DependencyGraph {
       for (const alias of this.pathAliases) {
         if (importSource.startsWith(alias.alias)) {
           const suffix = importSource.slice(alias.alias.length);
-          return alias.target + suffix;
+          const target = alias.target.replace(/^\.\//, '').replace(/\\/g, '/');
+          return target + suffix;
         }
       }
     }
@@ -92,14 +93,6 @@ export class DependencyGraph {
 
         if (this.exportsMap.has(testPath) || this.exportsMap.has(testNormalized)) {
           return testPath;
-        }
-
-        const fileName = testNormalized.split('/').pop()?.replace(/\.[^.]+$/, '');
-        for (const [existingFile] of this.exportsMap.entries()) {
-          const existingFileName = existingFile.split('/').pop()?.replace(/\.[^.]+$/, '');
-          if (fileName === existingFileName && existingFile.includes(importerDir)) {
-            return existingFile;
-          }
         }
       }
 
@@ -235,8 +228,10 @@ export class DependencyGraph {
   }
 
   private isExportImported(exportFile: string, exportName: string): boolean {
-const normalizedExportFile = exportFile.replace(/\\/g, '/');
-    const exportFileName = normalizedExportFile.split('/').pop();
+    const normalizedExportFile = exportFile.replace(/\\/g, '/');
+    const exportFileName = normalizedExportFile.split('/').pop() || '';
+    const exportFileWithoutExt = exportFileName.replace(/\.[^.]+$/, '');
+    const exportDir = normalizedExportFile.substring(0, normalizedExportFile.lastIndexOf('/'));
 
     for (const [importerFile, imports] of this.importsMap.entries()) {
       if (importerFile === exportFile) continue;
@@ -246,20 +241,33 @@ const normalizedExportFile = exportFile.replace(/\\/g, '/');
 
         if (resolvedPath) {
           const normalizedResolved = resolvedPath.replace(/\\/g, '/');
-          const resolvedFileName = normalizedResolved.split('/').pop();
+          const resolvedFileName = normalizedResolved.split('/').pop() || '';
+          const resolvedWithoutExt = resolvedFileName.replace(/\.[^.]+$/, '');
+          const resolvedDir = normalizedResolved.substring(0, normalizedResolved.lastIndexOf('/'));
 
-          if (normalizedResolved === normalizedExportFile || resolvedFileName === exportFileName) {
+          const sameFile = normalizedResolved === normalizedExportFile ||
+            resolvedFileName === exportFileName ||
+            resolvedWithoutExt === exportFileWithoutExt ||
+            resolvedWithoutExt === exportFileName ||
+            resolvedFileName === exportFileWithoutExt;
+
+          const sameDir = resolvedDir === exportDir ||
+            resolvedDir.endsWith(exportDir) ||
+            exportDir.endsWith(resolvedDir);
+
+          if (sameFile && (sameDir || exportDir === '' || resolvedDir === '')) {
             if (imp.named.includes(exportName) || imp.default) {
               return true;
             }
           }
 
-          if (imp.default && (exportName === 'default')) {
+          if (imp.default && exportName === 'default' && sameFile) {
             return true;
           }
         }
 
-        if (imp.source.includes(exportFile) || imp.source === `./${exportFile}` || imp.source === `./${exportFileName}`) {
+        const sourceNormalized = imp.source.replace(/\\/g, '/');
+        if (sourceNormalized.includes(exportFileWithoutExt) || sourceNormalized.includes(exportFileName)) {
           if (imp.named.includes(exportName) || imp.default) {
             return true;
           }
