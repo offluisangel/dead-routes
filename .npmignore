@@ -1,0 +1,15 @@
+src/
+tests/
+.gitignore
+.env
+.env.local
+tsconfig.json
+jest.config.js
+DESARROLLO_LOCAL.md
+GUIA.md
+ESTADO_PROYECTO.md
+PUBLICAR_NPM.md
+*.tgz
+node_modules/
+.git/
+.github/
