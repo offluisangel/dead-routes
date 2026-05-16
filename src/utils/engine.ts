@@ -9,18 +9,21 @@ import { ExportAnalyzer } from '../analyzers/exportAnalyzer.js';
 import { ExpressAdapter } from '../adapters/expressAdapter.js';
 import { NextjsAdapter } from '../adapters/nextjsAdapter.js';
 import { FastifyAdapter } from '../adapters/fastifyAdapter.js';
+import { ConfigLoader } from './configLoader.js';
 
 export class DeadRoutesEngine {
   private fileScanner: FileScanner;
   private importParser: ImportExportParser;
   private routeParser: RouteParser;
   private httpCallParser: HttpCallParser;
+  private configLoader: ConfigLoader;
 
   constructor() {
     this.fileScanner = new FileScanner();
     this.importParser = new ImportExportParser();
     this.routeParser = new RouteParser();
     this.httpCallParser = new HttpCallParser();
+    this.configLoader = new ConfigLoader();
 
     // Register framework adapters
     this.routeParser.registerAdapter(new ExpressAdapter());
@@ -36,8 +39,13 @@ export class DeadRoutesEngine {
     const frameworks = this.fileScanner.detectFrameworks(files);
     const primaryFramework = Array.from(frameworks.values())[0] || 'unknown';
 
+    // Load path aliases from tsconfig
+    const pathAliases = this.configLoader.loadPathAliases(projectPath);
+
     // Step 2: Build dependency graph
     const graph = new DependencyGraph();
+    graph.setProjectPath(projectPath);
+    graph.setPathAliases(pathAliases);
 
     for (const file of files) {
       // Skip non-code files

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'fs';
-import { resolve } from 'path';
-import type { DeadRoutesConfig } from '../types/index.js';
+import { resolve, dirname, join } from 'path';
+import type { DeadRoutesConfig, PathAlias } from '../types/index.js';
 
 export class ConfigLoader {
   async loadConfig(projectPath: string): Promise<DeadRoutesConfig> {
@@ -34,5 +34,46 @@ export class ConfigLoader {
     }
 
     return config;
+  }
+
+  loadPathAliases(projectPath: string): PathAlias[] {
+    const aliases: PathAlias[] = [];
+    const tsconfigPaths = ['tsconfig.json', 'tsconfig.app.json', 'tsconfig.node.json', 'tsconfig.build.json'];
+
+    for (const tsconfigFile of tsconfigPaths) {
+      const tsconfigPath = resolve(projectPath, tsconfigFile);
+      if (existsSync(tsconfigPath)) {
+        try {
+          const content = readFileSync(tsconfigPath, 'utf-8');
+          const tsconfig = JSON.parse(content);
+
+          if (tsconfig.compilerOptions?.paths) {
+            for (const [alias, paths] of Object.entries(tsconfig.compilerOptions.paths)) {
+              const pathArray = Array.isArray(paths) ? paths : [paths];
+              for (const targetPath of pathArray) {
+                aliases.push({
+                  alias: alias.replace(/\*$/, ''),
+                  target: targetPath.replace(/\*$/, ''),
+                });
+              }
+            }
+          }
+
+          if (tsconfig.compilerOptions?.baseUrl) {
+            for (const alias of aliases) {
+              if (!alias.target.startsWith('/') && !alias.target.match(/^[a-zA-Z]:/)) {
+                alias.target = resolve(projectPath, tsconfig.compilerOptions.baseUrl, alias.target);
+              }
+            }
+          }
+
+          break;
+        } catch (error) {
+          // Continue to next tsconfig
+        }
+      }
+    }
+
+    return aliases;
   }
 }

@@ -6,13 +6,17 @@ import { detectFramework } from '../utils/frameworkDetector.js';
 
 export class FileScanner {
   private ignorePatterns = [
-    'node_modules/**',
-    '.git/**',
-    'dist/**',
-    'build/**',
-    '.next/**',
-    'coverage/**',
+    '**/node_modules/**',
+    '**/.git/**',
+    '**/dist/**',
+    '**/build/**',
+    '**/.next/**',
+    '**/coverage/**',
     '**/*.d.ts',
+    '**/.next/**',
+    '**/out/**',
+    '**/.nuxt/**',
+    '**/.cache/**',
   ];
 
   private fileExtensions = ['ts', 'tsx', 'js', 'jsx', 'json'];

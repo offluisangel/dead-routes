@@ -69,3 +69,8 @@ export interface DeadRoutesConfig {
   json?: boolean;
   fix?: boolean;
 }
+
+export interface PathAlias {
+  alias: string;
+  target: string;
+}

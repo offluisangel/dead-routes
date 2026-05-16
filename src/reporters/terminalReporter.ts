@@ -1,12 +1,17 @@
 import chalk from 'chalk';
 import type { DeadIssue, AnalysisResult } from '../types/index.js';
+import { getFrameworkLabel } from '../utils/frameworkDetector.js';
 
 export class TerminalReporter {
   report(result: AnalysisResult): string {
     let output = '';
 
     // Header
-    output += chalk.bold.cyan('\n🔍 dead-routes v0.1.0 — scanning\n');
+    output += chalk.bold.cyan(`\n🔍 dead-routes v0.1.0 — scanning`);
+    if (result.framework && result.framework !== 'unknown') {
+      output += chalk.dim(` [${getFrameworkLabel(result.framework)}]`);
+    }
+    output += '\n';
 
     if (result.issues.length === 0) {
       output += chalk.green('✓ No dead routes or exports found!\n');

@@ -1,4 +1,4 @@
-import type { RouteDefinition, HttpCall, ImportInfo, ExportInfo } from '../types/index.js';
+import type { RouteDefinition, HttpCall, ImportInfo, ExportInfo, PathAlias } from '../types/index.js';
 
 export interface DependencyNode {
   id: string;
@@ -14,6 +14,16 @@ export class DependencyGraph {
   private httpCallsMap: Map<string, HttpCall[]> = new Map();
   private exportsMap: Map<string, Map<string, ExportInfo>> = new Map(); // file -> name -> ExportInfo
   private importsMap: Map<string, ImportInfo[]> = new Map(); // file -> ImportInfo[]
+  private pathAliases: PathAlias[] = [];
+  private projectPath: string = '';
+
+  setProjectPath(path: string): void {
+    this.projectPath = path;
+  }
+
+  setPathAliases(aliases: PathAlias[]): void {
+    this.pathAliases = aliases;
+  }
 
   addRoute(route: RouteDefinition): void {
     const id = `route:${route.method}:${route.path}`;
@@ -57,6 +67,57 @@ export class DependencyGraph {
     this.importsMap.get(file)!.push(imp);
   }
 
+  private resolveImportPath(importSource: string, importerFile: string): string | null {
+    const normalizedImporter = importerFile.replace(/\\/g, '/');
+    const importerDir = normalizedImporter.substring(0, normalizedImporter.lastIndexOf('/'));
+
+    if (importSource.startsWith('@')) {
+      for (const alias of this.pathAliases) {
+        if (importSource.startsWith(alias.alias)) {
+          const suffix = importSource.slice(alias.alias.length);
+          return alias.target + suffix;
+        }
+      }
+    }
+
+    if (importSource.startsWith('.')) {
+      const basePath = importSource.replace(/^\.\/+/, '');
+      let resolvedPath = `${importerDir}/${basePath}`;
+      const resolvedNormalized = resolvedPath.replace(/\\/g, '/');
+
+      const extensions = ['', '.ts', '.tsx', '.js', '.jsx', '/index', '/index.ts', '/index.tsx', '/index.js', '/index.jsx'];
+      for (const ext of extensions) {
+        const testPath = resolvedPath + ext;
+        const testNormalized = testPath.replace(/\\/g, '/');
+
+        if (this.exportsMap.has(testPath) || this.exportsMap.has(testNormalized)) {
+          return testPath;
+        }
+
+        const fileName = testNormalized.split('/').pop()?.replace(/\.[^.]+$/, '');
+        for (const [existingFile] of this.exportsMap.entries()) {
+          const existingFileName = existingFile.split('/').pop()?.replace(/\.[^.]+$/, '');
+          if (fileName === existingFileName && existingFile.includes(importerDir)) {
+            return existingFile;
+          }
+        }
+      }
+
+      for (const [existingFile] of this.exportsMap.entries()) {
+        const existingNormalized = existingFile.replace(/\\/g, '/');
+        const existingFileName = existingNormalized.split('/').pop()?.replace(/\.[^.]+$/, '');
+        const importedFileName = resolvedNormalized.split('/').pop()?.replace(/\.[^.]+$/, '');
+        if (existingFileName === importedFileName) {
+          return existingFile;
+        }
+      }
+
+      return resolvedPath;
+    }
+
+    return null;
+  }
+
   // Find routes that are not called by any HTTP client
   getUnusedRoutes(): RouteDefinition[] {
     const unused: RouteDefinition[] = [];
@@ -84,24 +145,54 @@ export class DependencyGraph {
   }
 
   private routeMatchesCall(route: RouteDefinition, call: HttpCall): boolean {
-    // Normalize paths for comparison
     const normalizedRoutePath = this.normalizePath(route.path);
     const normalizedCallUrl = this.normalizePath(call.url);
 
-    // Check if the call matches the route path (with param consideration)
-    return (
-      normalizedRoutePath === normalizedCallUrl ||
-      this.pathsMatch(normalizedRoutePath, normalizedCallUrl)
-    );
+    if (normalizedRoutePath === normalizedCallUrl) {
+      return true;
+    }
+
+    if (this.pathsMatch(normalizedRoutePath, normalizedCallUrl)) {
+      return true;
+    }
+
+    const routeBase = this.getBasePath(normalizedRoutePath);
+    const callBase = this.getBasePath(normalizedCallUrl);
+    if (routeBase === callBase) {
+      return true;
+    }
+
+    if (normalizedCallUrl.includes(normalizedRoutePath) || normalizedRoutePath.includes(normalizedCallUrl)) {
+      return true;
+    }
+
+    const routeKey = normalizedRoutePath.replace(/^\//, '');
+    const callKey = normalizedCallUrl.replace(/^\//, '');
+    if (routeKey === callKey) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private getBasePath(path: string): string {
+    const parts = path.split('/').filter(Boolean);
+    if (parts.length <= 2) return path;
+    return parts.slice(1).join('/');
   }
 
   private normalizePath(path: string): string {
-    return path
-      .replace(/:\w+/g, ':id') // Normalize params like :userId -> :id
-      .replace(/\[([^\]]+)\]/g, ':$1') // Normalize [id] -> :id
-      .replace(/\$\{[\w]+\}/g, ':id') // Normalize ${id} -> :id (template literals)
+    let normalized = path
+      .replace(/:\w+/g, ':id')
+      .replace(/\[([^\]]+)\]/g, ':$1')
+      .replace(/\$\{[\w]+\}/g, ':id')
       .toLowerCase()
-      .replace(/\/$/, ''); // Remove trailing slash
+      .replace(/\/$/, '')
+      .replace(/\/+/g, '/');
+
+    normalized = normalized.replace(/^\/api\/?/, '/');
+
+    return normalized;
   }
 
   private pathsMatch(routePath: string, callUrl: string): boolean {
@@ -114,7 +205,6 @@ export class DependencyGraph {
       const routePart = routeParts[i];
       const callPart = callParts[i];
 
-      // Skip param matching for now (simplified)
       if (!routePart.startsWith(':') && routePart !== callPart) {
         return false;
       }
@@ -145,13 +235,31 @@ export class DependencyGraph {
   }
 
   private isExportImported(exportFile: string, exportName: string): boolean {
-    // Check if this export is imported anywhere
-    for (const [file, imports] of this.importsMap.entries()) {
-      if (file === exportFile) continue; // Skip self
+const normalizedExportFile = exportFile.replace(/\\/g, '/');
+    const exportFileName = normalizedExportFile.split('/').pop();
+
+    for (const [importerFile, imports] of this.importsMap.entries()) {
+      if (importerFile === exportFile) continue;
 
       for (const imp of imports) {
-        // Check if this import references the export
-        if (imp.source.includes(exportFile) || imp.source === `./${exportFile}`) {
+        const resolvedPath = this.resolveImportPath(imp.source, importerFile);
+
+        if (resolvedPath) {
+          const normalizedResolved = resolvedPath.replace(/\\/g, '/');
+          const resolvedFileName = normalizedResolved.split('/').pop();
+
+          if (normalizedResolved === normalizedExportFile || resolvedFileName === exportFileName) {
+            if (imp.named.includes(exportName) || imp.default) {
+              return true;
+            }
+          }
+
+          if (imp.default && (exportName === 'default')) {
+            return true;
+          }
+        }
+
+        if (imp.source.includes(exportFile) || imp.source === `./${exportFile}` || imp.source === `./${exportFileName}`) {
           if (imp.named.includes(exportName) || imp.default) {
             return true;
           }
